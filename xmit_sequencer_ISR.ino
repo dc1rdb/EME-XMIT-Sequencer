@@ -5,104 +5,88 @@ PTT signal directly from WSJT-X via USB (RTS), requires wiring between CH340G pi
 optional external PTT signal (active low)
 sequenced ANT pol change between RX and TX possible
 DC1RDB
-Ver 3.3 - Mar 25, 2026
+Ver 3.4 - Mar 26, 2026
 */
 
 //pin assignments
-int PTT     =  2;  // PTT signal directly from WSJT-X via USB (RTS), active low, assigned to INT0
-int extPTT  =  3;  // external PTT signal, active low, to be used when TXing without WSJT-X, assigned to INT1
-int relay1  =  4;  // fixed on relay shield
-int relay2  =  7;  // fixed on relay shield
-int relay3  =  8;  // fixed on relay shield
-int relay4  =  12; // fixed on relay shield
+const int PTT = 2;       // PTT signal directly from WSJT-X via USB (RTS), active low, assigned to INT0
+const int extPTT = 3;    // external PTT signal, active low, to be used when TXing without WSJT-X, assigned to INT1
+const int relay1 = 4;    // PreAmp 12V supply
+const int relay2 = 7;    // PA bias
+const int relay3 = 8;    // XCVR PTT
+const int relay4 = 12;   // ANT TX/RX polarization
 
-volatile int state1 = HIGH; // LOW == TX, HIGH == RX
-volatile int state2 = HIGH; // LOW == TX, HIGH == RX
+// Volatile variables used in ISR
+volatile bool pttState = HIGH;
+volatile bool extPttState = HIGH;
+
+// Non-blocking Debounce Timing
+unsigned long lastDebounceTime1 = 0;
+unsigned long lastDebounceTime2 = 0;
+const unsigned long debounceDelay = 10; // ms
+
+// System State
+bool isTransmitting = false;
+
+void setup() {
+  pinMode(PTT, INPUT_PULLUP); // Ensure pullup if not using external 10k
+  pinMode(extPTT, INPUT_PULLUP);
   
-void setup()  {
+  pinMode(relay1, OUTPUT);
+  pinMode(relay2, OUTPUT);
+  pinMode(relay3, OUTPUT);
+  pinMode(relay4, OUTPUT);
 
-pinMode(PTT, INPUT);           //PTT input
-pinMode(extPTT, INPUT_PULLUP); //ext PTT input
-pinMode(relay1, OUTPUT);       //PreAmp 12V supply
-pinMode(relay2, OUTPUT);       //PA bias
-pinMode(relay3, OUTPUT);       //XCVR PTT
-pinMode(relay4, OUTPUT);       //ANT TX/RX polarization
+  // Initial RX State: PreAmp on, PA off, PTT off, Ant RX
+  digitalWrite(relay1, HIGH); 
+  digitalWrite(relay2, LOW);
+  digitalWrite(relay3, LOW);
+  digitalWrite(relay4, LOW);
 
-digitalWrite(relay1, LOW);     //init all relays off
-digitalWrite(relay2, LOW);
-digitalWrite(relay3, LOW);
-digitalWrite(relay4, LOW);
-
-attachInterrupt(0, pttChange, CHANGE);
-attachInterrupt(1, extpttChange, CHANGE);
-
-delay(3000);                      // suppress power-on transients
+  // Attach interrupts to falling edge (active low)
+  attachInterrupt(digitalPinToInterrupt(PTT), pttISR, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(extPTT), extpttISR, CHANGE);
+  
+  delay(3000); // Safe delay for power-on transients
 }
 
-
-// MAIN CODE
 void loop() {
+  // Read volatile variables safely
+  noInterrupts();
+  bool currentPtt = pttState;
+  bool currentExtPtt = extPttState;
+  interrupts();
 
-    // sequence to transmit
-    if ((state1 == LOW) || (state2 == LOW)){
-      digitalWrite(relay1, LOW);  // PreAmp off, RX/TX relay to TX
-      digitalWrite(relay4, HIGH); // switch to TX ANT pol
-      delay(50);
-      digitalWrite(relay2, HIGH); // PA bias on
-      delay(50);
-      digitalWrite(relay3, HIGH); // XCVR PTT active   
-    }
-  
-    // sequence to receive
-    if ((state1 == HIGH) && (state2 == HIGH)){
-      digitalWrite(relay3, LOW);  // XCVR PTT inactive
-      delay(50);
-      digitalWrite(relay2, LOW);  // PA bias off
-      delay(50);
-      digitalWrite(relay4, LOW);  // switch to RX ANT pol
-      digitalWrite(relay1, HIGH); // PreAmp on, RX/TX relay to RX
-    }
-}
+  // Determine needed state based on either input
+  bool needTX = (currentPtt == LOW || currentExtPtt == LOW);
 
- // PTT ISRs
-void pttChange()
-{
-  int newstate1 = digitalRead(PTT);
- 
-  if (newstate1 == LOW) {
-    delay(10); // debounce
-    newstate1 = digitalRead(PTT);
-    if (newstate1 == LOW) {
-      state1 = LOW;
-    }
-  }
-
-  if (newstate1 == HIGH) {
-    delay(10); // debounce
-    newstate1 = digitalRead(PTT);
-    if (newstate1 == HIGH) {
-      state1 = HIGH;
-    }
+  if (needTX && !isTransmitting) {
+    // --- SEQUENCE TO TRANSMIT ---
+    digitalWrite(relay1, LOW);  // 1. PreAmp off
+    digitalWrite(relay4, HIGH); // 2. Switch to TX ANT
+    delay(50);                 // Relay travel time
+    digitalWrite(relay2, HIGH); // 3. PA bias on
+    delay(50);                 // PA stabilization time
+    digitalWrite(relay3, HIGH); // 4. XCVR PTT active
+    isTransmitting = true;
+  } 
+  else if (!needTX && isTransmitting) {
+    // --- SEQUENCE TO RECEIVE ---
+    digitalWrite(relay3, LOW);  // 1. XCVR PTT inactive
+    delay(50);                 // Let PA settle
+    digitalWrite(relay2, LOW);  // 2. PA bias off
+    delay(50);                 // Relay travel time
+    digitalWrite(relay4, LOW);  // 3. Switch to RX ANT
+    digitalWrite(relay1, HIGH); // 4. PreAmp on
+    isTransmitting = false;
   }
 }
 
-void extpttChange()
-{
-  int newstate2 = digitalRead(extPTT);
- 
-  if (newstate2 == LOW) {
-    delay(10); // debounce
-    newstate2 = digitalRead(extPTT);
-    if (newstate2 == LOW) {
-      state2 = LOW;
-    }
-  }
+// ISRs - Keep them fast!
+void pttISR() {
+  pttState = digitalRead(PTT);
+}
 
-  if (newstate2 == HIGH) {
-    delay(10); // debounce
-    newstate2 = digitalRead(PTT);
-    if (newstate2 == HIGH) {
-      state2 = HIGH;
-    }
-  }
-}  
+void extpttISR() {
+  extPttState = digitalRead(extPTT);
+}
