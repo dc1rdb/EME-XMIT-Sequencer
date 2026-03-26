@@ -5,6 +5,8 @@ This is a little sequencer to properly switch LNA, PA and XCVR of my EME station
 
 It works with an Arduino Uno clone and Arduino relay shield. The PTT signal comes directly from WSJT-X via USB (RTS). Therefore, an additional wire between CH340G pin 13 and GPIO 2 on Arduino Uno clone board is required.
 
+For TXing outside WSJT-X, an external PTT input is provided.
+
 Optionally, the sequencer provides properly sequenced ANT pol change between RX and TX cycles to cope with some Faraday rotation effects.
 
 Please note that the XCVR should be exclusively controlled by the sequencer to avoid burning relays and LNAs ;-)
