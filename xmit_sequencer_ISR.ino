@@ -5,25 +5,24 @@ PTT signal directly from WSJT-X via USB (RTS), requires wiring between CH340G pi
 optional external PTT signal (active low)
 sequenced ANT pol change between RX and TX possible
 DC1RDB
-Ver 3.5 - Mar 26, 2026
+Ver 3.6 - Mar 26, 2026
 */
 
 //pin assignments
-const int PTT = 2; // PTT signal directly from WSJT-X via USB (RTS), active low, assigned to INT0
-const int extPTT = 3; // external PTT signal, active low, to be used when TXing without WSJT-X, assigned to INT1
-const int relay1 = 4; // PreAmp 12V supply
-const int relay2 = 7; // PA bias
-const int relay3 = 8; // XCVR PTT
+const int PTT = 2;     // PTT signal directly from WSJT-X via USB (RTS), active low, assigned to INT0
+const int extPTT = 3;  // external PTT signal, active low, to be used when TXing without WSJT-X, assigned to INT1
+const int relay1 = 4;  // PreAmp 12V supply
+const int relay2 = 7;  // PA bias
+const int relay3 = 8;  // XCVR PTT
 const int relay4 = 12; // ANT TX/RX polarization
 
 // Volatile variables used in ISR
 volatile bool pttState = HIGH;
 volatile bool extPttState = HIGH;
 
-// Non-blocking Debounce Timing
-unsigned long lastDebounceTime1 = 0;
-unsigned long lastDebounceTime2 = 0;
-const unsigned long debounceDelay = 20; // Increased to 20ms for better mechanical switch debouncing
+// Debounce timing
+const unsigned long debounceDelay = 50; // Increased to 50ms for mechanical PTT switch
+volatile unsigned long lastExtPttMicros = 0; 
 
 // System State
 bool isTransmitting = false;
@@ -81,19 +80,19 @@ void loop() {
   }
 }
 
-// ISRs - Using time-based debouncing
+// ISR for PTT (WSJT-X is usually clean/electronic, no debounce req'd)
 void pttISR() {
-  // For USB PTT, usually, no heavy debounce is needed, but added for consistency
-  if ((millis() - lastDebounceTime1) > 5) { // 5ms for digital signal
-    pttState = digitalRead(PTT);
-    lastDebounceTime1 = millis();
+  pttState = digitalRead(PTT);
+}
+
+// ISR for external PTT with debounce
+void extpttISR() {
+  // Get current time in microseconds for higher precision in ISR
+  unsigned long currentTime = micros();
+  // Only update state if enough time has passed since the last change
+  if (currentTime - lastExtPttMicros > (debounceDelay * 1000)) {
+    extPttState = digitalRead(extPTT);
+    lastExtPttMicros = currentTime;
   }
 }
 
-void extpttISR() {
-  // --- Debounce Logic for extPTT ---
-  if ((millis() - lastDebounceTime2) > debounceDelay) {
-    extPttState = digitalRead(extPTT);
-    lastDebounceTime2 = millis();
-  }
-}
