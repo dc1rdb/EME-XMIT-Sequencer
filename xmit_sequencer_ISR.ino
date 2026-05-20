@@ -5,7 +5,7 @@ PTT signal directly from WSJT-X via USB (RTS), requires wiring between CH340G pi
 optional external PTT signal (active low)
 sequenced ANT pol change between RX and TX possible
 DC1RDB
-Ver 5.0 - Fully Non-Blocking (No ISR / No delay)
+Ver 5.1 - Fully Non-Blocking (No ISR / No delay), debounce and pullup removed from USB/WSJT-X PTT
 */
 
 // pin assignments
@@ -16,17 +16,14 @@ const int relay2 = 7;  // PA bias
 const int relay3 = 8;  // XCVR PTT
 const int relay4 = 12; // ANT TX/RX polarization
 
-// Debounce timing
-const unsigned long debounceDelay = 50; // 50ms for mechanical PTT switch
-
-// Variables to track debounce state
-int lastPttState = HIGH;
+// Variables to track debounce state (external PTT only)
 int lastExtPttState = HIGH;
-unsigned long lastPttDebounceTime = 0;
 unsigned long lastExtPttDebounceTime = 0;
 
+// Debounce timing (external PTT only)
+const unsigned long debounceDelay = 50; // 50ms for mechanical external PTT switch
+
 // Confirmed/debounced states
-bool debouncedPtt = HIGH;
 bool debouncedExtPtt = HIGH;
 
 // Sequencer States
@@ -44,8 +41,8 @@ unsigned long sequenceTimestamp = 0;
 const unsigned long stepDelay = 50; // 50ms interval between steps
 
 void setup() {
-  pinMode(PTT, INPUT_PULLUP); // Ensure pullup if not using external 10k
-  pinMode(extPTT, INPUT_PULLUP);
+  pinMode(PTT, INPUT); 
+  pinMode(extPTT, INPUT_PULLUP); // Ensure pullup if not using external 10k
   pinMode(relay1, OUTPUT);
   pinMode(relay2, OUTPUT);
   pinMode(relay3, OUTPUT);
@@ -66,16 +63,7 @@ void loop() {
   int readingPtt = digitalRead(PTT);
   int readingExtPtt = digitalRead(extPTT);
 
-  // 2. DEBOUNCE WSJT-X PTT
-  if (readingPtt != lastPttState) {
-    lastPttDebounceTime = millis();
-  }
-  if ((millis() - lastPttDebounceTime) > debounceDelay) {
-    debouncedPtt = readingPtt;
-  }
-  lastPttState = readingPtt;
-
-  // 3. DEBOUNCE EXTERNAL PTT
+  // 2. DEBOUNCE EXTERNAL PTT ONLY
   if (readingExtPtt != lastExtPttState) {
     lastExtPttDebounceTime = millis();
   }
@@ -84,10 +72,10 @@ void loop() {
   }
   lastExtPttState = readingExtPtt;
 
-  // 4. DETERMINE TARGET STATE
-  bool needTX = (debouncedPtt == LOW || debouncedExtPtt == LOW);
+  // 3. DETERMINE TARGET STATE (WSJT-X PTT not debounced, external PTT debounced)
+  bool needTX = (readingPtt == LOW || debouncedExtPtt == LOW);
 
-  // 5. NON-BLOCKING SEQUENCER STATE MACHINE
+  // 4. NON-BLOCKING SEQUENCER STATE MACHINE
   unsigned long currentMillis = millis();
 
   switch (currentState) {
